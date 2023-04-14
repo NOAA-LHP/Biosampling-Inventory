@@ -1,0 +1,683 @@
+---
+title: "Guam BioSampling Species Summaries"
+author: 'Eva Schemmel'
+date: "Updated April 2023 (BioSampling data pulled 4-10-2023)"
+output:
+  word_document:
+    reference_docx: template_formating_inventory.docx
+params:
+  APRU: Aphareus rutilans
+  CAIG: Caranx ignobilis
+  CALU: Caranx lugubris
+  ETCA: Etelis carbunculus
+  ETCO: Etelis coruscans
+  LERU: Lethrinus rubrioperculatus
+  LUKA: Lutjanus kasmira
+  PRAU: Pristipomoides auricilla
+  PRFI: Pristipomoides filamentosus
+  PRFL: Pristipomoides flavipinnis
+  PRSI: Pristipomoides sieboldii
+  PRZO: Pristipomoides zonatus
+  VALO: Variola louti
+  data: Guam_inventory.csv
+  dataupload: "2023-04-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(magrittr)
+library(plyr)
+library(ggplot2)
+library(FSA)
+library(dplyr)
+library(plotrix)
+library(tidyr)
+library(tidyverse)
+library(naniar)
+library(lubridate)
+library(png)
+library(devtools)
+library(MASS)
+library(gplots)
+library(gridExtra)
+library(DBI)
+library(RMariaDB)
+
+
+#source("~/Documents/github/Sampling_Guidance/sample_review_cleaned.R") #updated April 2023
+#note update sample_review with latest BioSampling data before running
+#only need to do this once before running every species
+
+
+```
+
+The following species were sampled through the Territory Commercial Fisheries BioSampling Program and NOAA life history cruises and are reviewed in this appendix for completeness of sampling to assess regional life history parameters for age, growth, and reproduction. 
+
+
+  Bottomfish Management Unit Species (MUS):    
+  Aphareus rutilans  
+  Caranx ignobilis  
+  Caranx lugubris  
+  Etelis carbunculus  
+  Etelis coruscans  
+  Lethrinus rubrioperculatus  
+  Lutjanus kasmira  
+  Pristipomoides auricilla  
+  Pristipomoides filamentosus  
+  Pristipomoides flavipinnis  
+  Pristipomoides sieboldii  
+  Pristipomoides zonatus  
+  Variola louti  
+ 
+  
+These species summaries are a guide to inform future sampling collection efforts and life history assessments. Species with completed life history assessments for the territory are excluded unless continued sample collection is recommended for additional research to meet fisheries science and management needs. All BMUS species with a sample size greater or equal to 50 are included in this appendix. Sample sizes should be considered as approximate, as there is not always an otolith and gonad for every entry in the database due to otoliths breaking or gonads not being collected on occasion.
+
+
+Data for each species is reviewed across four categories: fish size distribution, monthly sample distribution, relationship between gonadosomatic index (GSI) and fish length, and mean female GSI by month. Each of these categories allows for a review of the sample collection progress to meet the needs of the life history assessments for age, growth, spawning season, and size/age at maturity. 
+
+
+Size Distribution: The length frequency distribution is a proxy for looking at the sampling coverage to estimate age and growth. It also allows for a first look at the size distribution of females and males. This is a proxy and histological assessment is recommended to confirm gender and to identify unknowns.
+
+
+Monthly Sample Distribution: The total number of samples per month are plotted. A sample size of 20 individuals per month is recommended (red dashed line).
+
+
+GSI and Fish Length: Gonadosomatic index (gonad weight/fish weight *100) is plotted against fish size to visualize the sample distribution as a proxy for size at maturity. 
+
+
+Spawning Season: Female Gonadosomatic Index (GSI) is plotted by month to visualize if sampling is adequate to determine spawning seasonality. 
+
+```{r functions,  results='hide', echo=FALSE}
+
+
+
+#data summary and formatting function that used each 4 digit species parameter code 
+dataload<-function (data, species) {
+temp<-read.csv(data)
+temp<-subset(temp, ScientificName==species)
+temp<-subset(temp, Length.cm.>=2)
+return(temp)
+}
+
+datamonth<-function(dataframe){
+temp=dataframe
+temp$Month<-month(temp$Date, label=TRUE) #keeps month data in date formatt for plotting in order
+tempm<-temp%>% 
+  na.omit(temp)
+Months<-c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "July", "Aug", "Sep", "Oct", "Nov", "Dec")
+Mn=c(1:10, 1)
+Months<-as.data.frame(Months)
+Months<-as.factor(Months$Months)
+tempm<-tempm %>%
+  group_by(Month)%>%
+  dplyr::summarize(N_month=length(Length.cm.))
+maxm<-max(tempm$N_month, na.rm=TRUE)
+maxm<-if (maxm >=20) maxm else 20
+tempm<-complete(tempm, Month, fill=list(N_Month=0))
+return(tempm)
+}
+
+datagsi<-function(dataframe){
+  temp=dataframe
+gsi<-temp %>% 
+  mutate(GSI=(GonWeight/Weight.g.)*100)
+return(gsi)
+}
+
+
+###
+
+# some function using the subset of data, here it was a plot function
+
+put_together <- function(data, species,temp) {
+build_list <- list(dataload(data,species),datamonth(temp),datagsi(temp))
+names(build_list)<- c('temp','tempm','gsi')
+return(build_list)
+}
+
+
+#plotting function 4 panel figure for each species 
+dataplot<-function(temp, tempm, gsi){
+bin_width=2
+nbins <- seq(min - bin_width,
+             max + bin_width,
+             by = bin_width)
+p1 <- ggplot(data=temp, aes(x=Length.cm.))+geom_histogram(binwidth=2,breaks=nbins, color="black", aes(fill=Sex)) + 
+  xlab("Fork Length (cm)") +  ylab("Frequency") + ggtitle("Size Distribution")+
+  scale_fill_manual(values=c("red", "blue", "white"))+
+  theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"), legend.position="none")+scale_x_continuous(limits = c(min-2, max+2))
+
+
+#monthly samples
+p2<-ggplot(tempm, aes(x=Month, y=tempm$N_month)) + 
+  geom_bar(stat = "identity")+xlab("") +  ylab("Frequency") + ggtitle("Monthly Sample Distribution")+
+geom_hline(yintercept = 20, colour="red", linetype = "dashed")+ theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"), legend.position="none")
+
+#GSI
+p3<-ggplot(gsi, aes(x=Length.cm., y=GSI, color=Sex)) +  xlab("Fork Length (cm)") +  ylab("GSI") + ggtitle("GSI & Fish Length")+
+geom_point(aes(colour=Sex), size=2) +
+geom_point(shape = 1,size=2, colour = "black") + scale_color_manual(values=c("red", "blue", "white"))+
+theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"), legend.position="none")
+
+  
+#Spawning Season
+gsi_f<-gsi %>% 
+  subset(Sex=="F")
+gsi_f$Month<-month(gsi_f$Date, label=TRUE)
+
+p4<-ggplot(gsi_f, aes(x=as.factor( Month), y=GSI)) + 
+    geom_boxplot(fill="red") +
+   xlab("") +  ylab("GSI") + ggtitle("Spawning Season")+
+  theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"), legend.position="none")+scale_x_discrete(limits = month.abb)
+grid.arrange(p1,p2,p3,p4 , nrow = 2)
+}
+
+```
+
+```{r APRU,  results='hide', echo=FALSE}
+temp=dataload(params$data, params$APRU)
+final_list <- put_together(params$data, params$APRU, temp)
+
+sample_size=length(final_list$temp$Length.cm.)
+min<-min(final_list$temp$Length.cm., na.rm=TRUE)
+max<-max(final_list$temp$Length.cm., na.rm=TRUE)
+median<-median(final_list$temp$Length.cm., na.rm=TRUE)
+gender<-final_list$temp %>%
+  group_by(Sex)%>%
+  summarize(n_females=length(Sex=="F"))
+female=gender[1,2]
+male=gender[2,2]
+unknown=gender[3,2]
+
+maxm<-max(final_list$tempm$N_month, na.rm=TRUE)
+maxm<-if (maxm >=20) maxm else 20
+
+```
+
+
+\newpage
+
+# Management Unit Species
+# *`r params$APRU`*                 
+
+
+A total of `r sample_size` *`r params$APRU`* samples (females=`r female`, males=`r male`, unknown/na=`r unknown`) have been collected to date (`r params$dataupload`). Median fork length is `r median` cm (min=`r min` cm, max=`r max` cm). 
+
+```{r fig.1, figures-side, fig.show="hold", out.width="50%", echo=FALSE, results='hide',warning=FALSE, fig.width=7.5, fig.height=7.5, dpi=300}
+
+dataplot(final_list$temp,final_list$tempm, final_list$gsi)
+```
+
+
+
+Figure A-1. *A. rutilans* sampling summaries for size distribution, monthly sample collection, GSI and fish length, and spawning season. Females are red (circles), males are blue (circles), unknown sex is blank (circles).
+
+
+```{r CAIG,  results='hide', echo=FALSE}
+temp=dataload(params$data, params$CAIG)
+final_list <- put_together(params$data, params$CAIG, temp)
+
+sample_size=length(final_list$temp$Length.cm.)
+min<-min(final_list$temp$Length.cm., na.rm=TRUE)
+max<-max(final_list$temp$Length.cm., na.rm=TRUE)
+median<-median(final_list$temp$Length.cm., na.rm=TRUE)
+gender<-final_list$temp %>%
+  group_by(Sex)%>%
+  summarize(n_females=length(Sex=="F"))
+female=gender[1,2]
+male=gender[2,2]
+unknown=gender[3,2]
+
+maxm<-max(final_list$tempm$N_month, na.rm=TRUE)
+maxm<-if (maxm >=20) maxm else 20
+
+```
+
+\newpage
+
+
+# *`r params$CAIG`*                 
+
+
+A total of `r sample_size` *`r params$CAIG`* samples (females=`r female`, males=`r male`, unknown/na=`r unknown`) have been collected to date (`r params$dataupload`). Median fork length is `r median` cm (min=`r min` cm, max=`r max` cm). 
+
+```{r fig.2, figures-side, fig.show="hold", out.width="50%", echo=FALSE, results='hide',warning=FALSE, fig.width=7.5, fig.height=7.5, dpi=300}
+
+dataplot(final_list$temp,final_list$tempm, final_list$gsi)
+```
+
+
+Figure A-2. *C. ignobilis* sampling summaries for size distribution, monthly sample collection, GSI and fish length, and spawning season. Females are red (circles), males are blue (circles), unknown sex is blank (circles).
+
+
+
+```{r CALU,  results='hide', echo=FALSE}
+temp=dataload(params$data, params$CALU)
+final_list <- put_together(params$data, params$CALU, temp)
+
+sample_size=length(final_list$temp$Length.cm.)
+min<-min(final_list$temp$Length.cm., na.rm=TRUE)
+max<-max(final_list$temp$Length.cm., na.rm=TRUE)
+median<-median(final_list$temp$Length.cm., na.rm=TRUE)
+gender<-final_list$temp %>%
+  group_by(Sex)%>%
+  summarize(n_females=length(Sex=="F"))
+female=gender[1,2]
+male=gender[2,2]
+unknown=gender[3,2]
+
+maxm<-max(final_list$tempm$N_month, na.rm=TRUE)
+maxm<-if (maxm >=20) maxm else 20
+
+```
+
+\newpage
+
+
+# *`r params$CALU`*                 
+
+
+A total of `r sample_size` *`r params$CALU`* samples (females=`r female`, males=`r male`, unknown/na=`r unknown`) have been collected to date (`r params$dataupload`). Median fork length is `r median` cm (min=`r min` cm, max=`r max` cm). 
+
+```{r fig.3, figures-side, fig.show="hold", out.width="50%", echo=FALSE, results='hide',warning=FALSE, fig.width=7.5, fig.height=7.5, dpi=300}
+
+dataplot(final_list$temp,final_list$tempm, final_list$gsi)
+```
+
+
+Figure A-3. *C. lugubris* sampling summaries for size distribution, monthly sample collection, GSI and fish length, and spawning season. Females are red (circles), males are blue (circles), unknown sex is blank (circles).
+
+
+
+```{r ETCA,  results='hide', echo=FALSE}
+temp=dataload(params$data, params$ETCA)
+final_list <- put_together(params$data, params$ETCA, temp)
+
+sample_size=length(final_list$temp$Length.cm.)
+min<-min(final_list$temp$Length.cm., na.rm=TRUE)
+max<-max(final_list$temp$Length.cm., na.rm=TRUE)
+median<-median(final_list$temp$Length.cm., na.rm=TRUE)
+gender<-final_list$temp %>%
+  group_by(Sex)%>%
+  summarize(n_females=length(Sex=="F"))
+female=gender[1,2]
+male=gender[2,2]
+unknown=gender[3,2]
+
+maxm<-max(final_list$tempm$N_month, na.rm=TRUE)
+maxm<-if (maxm >=20) maxm else 20
+
+```
+
+\newpage
+
+
+# *`r params$ETCA`*                 
+
+
+A total of `r sample_size` *`r params$ETCA`* samples (females=`r female`, males=`r male`, unknown/na=`r unknown`) have been collected to date (`r params$dataupload`). Median fork length is `r median` cm (min=`r min` cm, max=`r max` cm). 
+
+```{r fig.4, figures-side, fig.show="hold", out.width="50%", echo=FALSE, results='hide',warning=FALSE, fig.width=7.5, fig.height=7.5, dpi=300}
+
+dataplot(final_list$temp,final_list$tempm, final_list$gsi)
+```
+
+
+
+Figure A-4. *E. carbunculus* sampling summaries for size distribution, monthly sample collection, GSI and fish length, and spawning season. Females are red (circles), males are blue (circles), unknown sex is blank (circles).
+
+
+
+```{r ETCO,  results='hide', echo=FALSE}
+temp=dataload(params$data, params$ETCO)
+final_list <- put_together(params$data, params$ETCO, temp)
+
+sample_size=length(final_list$temp$Length.cm.)
+min<-min(final_list$temp$Length.cm., na.rm=TRUE)
+max<-max(final_list$temp$Length.cm., na.rm=TRUE)
+median<-median(final_list$temp$Length.cm., na.rm=TRUE)
+gender<-final_list$temp %>%
+  group_by(Sex)%>%
+  summarize(n_females=length(Sex=="F"))
+female=gender[1,2]
+male=gender[2,2]
+unknown=gender[3,2]
+
+maxm<-max(final_list$tempm$N_month, na.rm=TRUE)
+maxm<-if (maxm >=20) maxm else 20
+
+```
+
+\newpage
+
+
+# *`r params$ETCO`*                 
+
+
+A total of `r sample_size` *`r params$ETCO`* samples (females=`r female`, males=`r male`, unknown/na=`r unknown`) have been collected to date (`r params$dataupload`). Median fork length is `r median` cm (min=`r min` cm, max=`r max` cm). 
+
+```{r fig.5, figures-side, fig.show="hold", out.width="50%", echo=FALSE, results='hide',warning=FALSE, fig.width=7.5, fig.height=7.5, dpi=300}
+
+dataplot(final_list$temp,final_list$tempm, final_list$gsi)
+```
+
+
+
+Figure A-5. *E. coruscans* sampling summaries for size distribution, monthly sample collection, GSI and fish length, and spawning season. Females are red (circles), males are blue (circles), unknown sex is blank (circles).
+
+
+
+```{r LERU,  results='hide', echo=FALSE}
+temp=dataload(params$data, params$LERU)
+final_list <- put_together(params$data, params$LERU, temp)
+
+sample_size=length(final_list$temp$Length.cm.)
+min<-min(final_list$temp$Length.cm., na.rm=TRUE)
+max<-max(final_list$temp$Length.cm., na.rm=TRUE)
+median<-median(final_list$temp$Length.cm., na.rm=TRUE)
+gender<-final_list$temp %>%
+  group_by(Sex)%>%
+  summarize(n_females=length(Sex=="F"))
+female=gender[1,2]
+male=gender[2,2]
+unknown=gender[3,2]
+
+maxm<-max(final_list$tempm$N_month, na.rm=TRUE)
+maxm<-if (maxm >=20) maxm else 20
+
+```
+
+\newpage
+
+
+# *`r params$LERU`*                 
+
+
+A total of `r sample_size` *`r params$LERU`* samples (females=`r female`, males=`r male`, unknown/na=`r unknown`) have been collected to date (`r params$dataupload`). Median fork length is `r median` cm (min=`r min` cm, max=`r max` cm). 
+
+```{r fig.6, figures-side, fig.show="hold", out.width="50%", echo=FALSE, results='hide',warning=FALSE, fig.width=7.5, fig.height=7.5, dpi=300}
+
+dataplot(final_list$temp,final_list$tempm, final_list$gsi)
+```
+
+
+
+
+Figure A-6. *L rubrioperculatus* sampling summaries for size distribution, monthly sample collection, GSI and fish length, and spawning season. Females are red (circles), males are blue (circles), unknown sex is blank (circles).
+
+
+```{r LUKA,  results='hide', echo=FALSE}
+temp=dataload(params$data, params$LUKA)
+final_list <- put_together(params$data, params$LUKA, temp)
+
+sample_size=length(final_list$temp$Length.cm.)
+min<-min(final_list$temp$Length.cm., na.rm=TRUE)
+max<-max(final_list$temp$Length.cm., na.rm=TRUE)
+median<-median(final_list$temp$Length.cm., na.rm=TRUE)
+gender<-final_list$temp %>%
+  group_by(Sex)%>%
+  summarize(n_females=length(Sex=="F"))
+female=gender[1,2]
+male=gender[2,2]
+unknown=gender[3,2]
+
+maxm<-max(final_list$tempm$N_month, na.rm=TRUE)
+maxm<-if (maxm >=20) maxm else 20
+
+```
+
+\newpage
+
+
+# *`r params$LUKA`*                 
+
+
+A total of `r sample_size` *`r params$LUKA`* samples (females=`r female`, males=`r male`, unknown/na=`r unknown`) have been collected to date (`r params$dataupload`). Median fork length is `r median` cm (min=`r min` cm, max=`r max` cm). 
+
+```{r fig.7, figures-side, fig.show="hold", out.width="50%", echo=FALSE, results='hide',warning=FALSE, fig.width=7.5, fig.height=7.5, dpi=300}
+
+dataplot(final_list$temp,final_list$tempm, final_list$gsi)
+```
+
+
+
+Figure A-7. *L. kasmira* sampling summaries for size distribution, monthly sample collection, GSI and fish length, and spawning season. Females are red (circles), males are blue (circles), unknown sex is blank (circles).
+
+
+```{r PRAU,  results='hide', echo=FALSE}
+temp=dataload(params$data, params$PRAU)
+final_list <- put_together(params$data, params$PRAU, temp)
+
+sample_size=length(final_list$temp$Length.cm.)
+min<-min(final_list$temp$Length.cm., na.rm=TRUE)
+max<-max(final_list$temp$Length.cm., na.rm=TRUE)
+median<-median(final_list$temp$Length.cm., na.rm=TRUE)
+gender<-final_list$temp %>%
+  group_by(Sex)%>%
+  summarize(n_females=length(Sex=="F"))
+female=gender[1,2]
+male=gender[2,2]
+unknown=gender[3,2]
+
+maxm<-max(final_list$tempm$N_month, na.rm=TRUE)
+maxm<-if (maxm >=20) maxm else 20
+
+```
+
+\newpage
+
+
+# *`r params$PRAU`*                 
+
+
+A total of `r sample_size` *`r params$PRAU`* samples (females=`r female`, males=`r male`, unknown/na=`r unknown`) have been collected to date (`r params$dataupload`). Median fork length is `r median` cm (min=`r min` cm, max=`r max` cm). 
+
+```{r fig.8, figures-side, fig.show="hold", out.width="50%", echo=FALSE, results='hide',warning=FALSE, fig.width=7.5, fig.height=7.5, dpi=300}
+
+dataplot(final_list$temp,final_list$tempm, final_list$gsi)
+```
+
+
+
+Figure A-8. *P. auricilla* sampling summaries for size distribution, monthly sample collection, GSI and fish length, and spawning season. Females are red (circles), males are blue (circles), unknown sex is blank (circles).
+
+
+```{r PRFI,  results='hide', echo=FALSE}
+temp=dataload(params$data, params$PRFI)
+final_list <- put_together(params$data, params$PRFI, temp)
+
+sample_size=length(final_list$temp$Length.cm.)
+min<-min(final_list$temp$Length.cm., na.rm=TRUE)
+max<-max(final_list$temp$Length.cm., na.rm=TRUE)
+median<-median(final_list$temp$Length.cm., na.rm=TRUE)
+gender<-final_list$temp %>%
+  group_by(Sex)%>%
+  summarize(n_females=length(Sex=="F"))
+female=gender[1,2]
+male=gender[2,2]
+unknown=gender[3,2]
+
+maxm<-max(final_list$tempm$N_month, na.rm=TRUE)
+maxm<-if (maxm >=20) maxm else 20
+
+```
+
+\newpage
+
+
+# *`r params$PRFI`*                 
+
+
+A total of `r sample_size` *`r params$PRFI`* samples (females=`r female`, males=`r male`, unknown/na=`r unknown`) have been collected to date (`r params$dataupload`). Median fork length is `r median` cm (min=`r min` cm, max=`r max` cm). 
+
+```{r fig.9, figures-side, fig.show="hold", out.width="50%", echo=FALSE, results='hide',warning=FALSE, fig.width=7.5, fig.height=7.5, dpi=300}
+
+dataplot(final_list$temp,final_list$tempm, final_list$gsi)
+```
+
+
+
+Figure A-9. *P. filamentosus* sampling summaries for size distribution, monthly sample collection, GSI and fish length, and spawning season. Females are red (circles), males are blue (circles), unknown sex is blank (circles).
+
+
+```{r PRFL,  results='hide', echo=FALSE}
+temp=dataload(params$data, params$PRFL)
+final_list <- put_together(params$data, params$PRFL, temp)
+
+sample_size=length(final_list$temp$Length.cm.)
+min<-min(final_list$temp$Length.cm., na.rm=TRUE)
+max<-max(final_list$temp$Length.cm., na.rm=TRUE)
+median<-median(final_list$temp$Length.cm., na.rm=TRUE)
+gender<-final_list$temp %>%
+  group_by(Sex)%>%
+  summarize(n_females=length(Sex=="F"))
+female=gender[1,2]
+male=gender[2,2]
+unknown=gender[3,2]
+
+maxm<-max(final_list$tempm$N_month, na.rm=TRUE)
+maxm<-if (maxm >=20) maxm else 20
+
+```
+
+\newpage
+
+
+# *`r params$PRFL`*                 
+
+
+A total of `r sample_size` *`r params$PRFL`* samples (females=`r female`, males=`r male`, unknown/na=`r unknown`) have been collected to date (`r params$dataupload`). Median fork length is `r median` cm (min=`r min` cm, max=`r max` cm). 
+
+```{r fig.10, figures-side, fig.show="hold", out.width="50%", echo=FALSE, results='hide',warning=FALSE, fig.width=7.5, fig.height=7.5, dpi=300}
+
+dataplot(final_list$temp,final_list$tempm, final_list$gsi)
+```
+
+
+
+Figure A-10. *P. flavipinnis* sampling summaries for size distribution, monthly sample collection, GSI and fish length, and spawning season. Females are red (circles), males are blue (circles), unknown sex is blank (circles).
+
+
+
+```{r PRSI,  results='hide', echo=FALSE}
+temp=dataload(params$data, params$PRSI)
+final_list <- put_together(params$data, params$PRSI, temp)
+
+sample_size=length(final_list$temp$Length.cm.)
+min<-min(final_list$temp$Length.cm., na.rm=TRUE)
+max<-max(final_list$temp$Length.cm., na.rm=TRUE)
+median<-median(final_list$temp$Length.cm., na.rm=TRUE)
+gender<-final_list$temp %>%
+  group_by(Sex)%>%
+  summarize(n_females=length(Sex=="F"))
+female=gender[1,2]
+male=gender[2,2]
+unknown=gender[3,2]
+
+maxm<-max(final_list$tempm$N_month, na.rm=TRUE)
+maxm<-if (maxm >=20) maxm else 20
+
+```
+
+\newpage
+
+
+# *`r params$PRSI`*                 
+
+
+A total of `r sample_size` *`r params$PRSI`* samples (females=`r female`, males=`r male`, unknown/na=`r unknown`) have been collected to date (`r params$dataupload`). Median fork length is `r median` cm (min=`r min` cm, max=`r max` cm). 
+
+```{r fig.11, figures-side, fig.show="hold", out.width="50%", echo=FALSE, results='hide',warning=FALSE, fig.width=7.5, fig.height=7.5, dpi=300}
+
+dataplot(final_list$temp,final_list$tempm, final_list$gsi)
+```
+
+
+
+
+Figure A-11. *P. sieboldii* sampling summaries for size distribution, monthly sample collection, GSI and fish length, and spawning season. Females are red (circles), males are blue (circles), unknown sex is blank (circles).
+
+
+
+```{r PRZO,  results='hide', echo=FALSE}
+temp=dataload(params$data, params$PRZO)
+final_list <- put_together(params$data, params$PRZO, temp)
+
+sample_size=length(final_list$temp$Length.cm.)
+min<-min(final_list$temp$Length.cm., na.rm=TRUE)
+max<-max(final_list$temp$Length.cm., na.rm=TRUE)
+median<-median(final_list$temp$Length.cm., na.rm=TRUE)
+gender<-final_list$temp %>%
+  group_by(Sex)%>%
+  summarize(n_females=length(Sex=="F"))
+female=gender[1,2]
+male=gender[2,2]
+unknown=gender[3,2]
+
+maxm<-max(final_list$tempm$N_month, na.rm=TRUE)
+maxm<-if (maxm >=20) maxm else 20
+
+```
+
+\newpage
+
+
+# *`r params$PRZO`*                 
+
+
+A total of `r sample_size` *`r params$PRZO`* samples (females=`r female`, males=`r male`, unknown/na=`r unknown`) have been collected to date (`r params$dataupload`). Median fork length is `r median` cm (min=`r min` cm, max=`r max` cm). 
+
+```{r fig.12, figures-side, fig.show="hold", out.width="50%", echo=FALSE, results='hide',warning=FALSE, fig.width=7.5, fig.height=7.5, dpi=300}
+
+dataplot(final_list$temp,final_list$tempm, final_list$gsi)
+```
+
+
+
+
+Figure A-12. *P. zonatus* sampling summaries for size distribution, monthly sample collection, GSI and fish length, and spawning season. Females are red (circles), males are blue (circles), unknown sex is blank (circles).
+
+
+```{r VALO,  results='hide', echo=FALSE}
+temp=dataload(params$data, params$VALO)
+final_list <- put_together(params$data, params$VALO, temp)
+
+sample_size=length(final_list$temp$Length.cm.)
+min<-min(final_list$temp$Length.cm., na.rm=TRUE)
+max<-max(final_list$temp$Length.cm., na.rm=TRUE)
+median<-median(final_list$temp$Length.cm., na.rm=TRUE)
+gender<-final_list$temp %>%
+  group_by(Sex)%>%
+  summarize(n_females=length(Sex=="F"))
+female=gender[1,2]
+male=gender[2,2]
+unknown=gender[3,2]
+
+maxm<-max(final_list$tempm$N_month, na.rm=TRUE)
+maxm<-if (maxm >=20) maxm else 20
+
+```
+
+\newpage
+
+
+# *`r params$VALO`*                 
+
+
+A total of `r sample_size` *`r params$VALO`* samples (females=`r female`, males=`r male`, unknown/na=`r unknown`) have been collected to date (`r params$dataupload`). Median fork length is `r median` cm (min=`r min` cm, max=`r max` cm). 
+
+```{r fig.13, figures-side, fig.show="hold", out.width="50%", echo=FALSE, results='hide',warning=FALSE, fig.width=7.5, fig.height=7.5, dpi=300}
+
+dataplot(final_list$temp,final_list$tempm, final_list$gsi)
+```
+
+
+
+
+Figure A-13. *V. louti* sampling summaries for size distribution, monthly sample collection, GSI and fish length, and spawning season. Females are red (circles), males are blue (circles), unknown sex is blank (circles).
+
